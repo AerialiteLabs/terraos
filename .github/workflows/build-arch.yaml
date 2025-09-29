@@ -1,0 +1,83 @@
+name: Build TerraOS
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-18.04
+    strategy:
+      matrix:
+        board:
+          - octopus
+          - dedede
+          - jacuzzi
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: Install Arch Linux (Credits to zaoqi on Github)
+      run: curl -L https://github.com/zaoqi/github-actions-archlinux/raw/master/install.sh | sh
+    - name: Build TerraOS
+      env:
+        board: ${{ matrix.board }}
+      run: |
+        sudo pacman -S --needed git base-devel
+        git clone https://aur.archlinux.org/yay.git
+        cd yay
+        makepkg -si
+
+        packages=(
+          wget
+          util-linux
+          e2fsprogs
+          zstd
+          zip
+          pv
+          coreutils
+          sed
+          findutils
+          squashfs-tools
+          tar
+          lsof
+          arch-install-scripts
+          cloud-utils
+        )
+
+        for package in "${packages[@]}"; do
+          if pacman -Si "$package" &>/dev/null; then
+            sudo pacman -S --needed "$package"
+          else
+            yay -S --needed "$package"
+          fi
+        done
+
+        mkdir -p build
+        cd build
+        
+        if [ "${board}" == "jacuzzi" ]; then
+          bash ../scripts/build_stage1.sh terraos_jacuzzi
+          board="jacuzzi_makomo"
+        else
+          bash ../scripts/build_stage1.sh terraos
+        fi
+
+        bash ../scripts/build_aur_packages.sh
+
+        bash ../scripts/download_images.sh
+
+        bash ../scripts/build_all.sh "$shim" "$reco" "$reven"
+
+        if [ "${board}" == "jacuzzi_makomo" ]; then
+          makomoshim="$shim"
+          shim=$(echo "$shim" | sed 's/jacuzzi_makomo/jacuzzi/')
+          mv "$makomoshim" "$shim"
+          board="jacuzzi"
+        fi
+
+    - name: Upload built shim
+      uses: softprops/action-gh-release@v2
+      with:
+        name: TerraOS ${{ inputs.tag }}
+        tag_name: ${{ inputs.tag }}
+        files: ./${{ matrix.board }}.bin
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
